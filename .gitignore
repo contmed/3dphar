@@ -1,0 +1,9 @@
+matrix_output_*.html
+elements.mdc
+docs/
+*.md
+!README.md
+*.mdc
+*.pdf
+*.docx
+*.pptx

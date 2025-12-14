@@ -1,0 +1,684 @@
+{% extends "base.html" %}
+
+{% block title %}ATX матрица{% endblock %}
+
+{% block extra_css %}
+<style>
+    .matrix-wrapper { overflow:auto; max-height: calc(100vh - 180px); border: 1px solid #dee2e6; padding: 0; }
+    .matrix-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    .col-click { cursor: pointer; text-decoration: underline; }
+    .group-col-header { position: sticky; top: 0; z-index: 1; }
+    .badge-count { background:#0d6efd; }
+    .atx-matrix-table tbody td.group-count.has-count { 
+        cursor: pointer; 
+        font-size: calc(var(--matrix-font-size) * 0.9) !important; 
+        font-weight: 600;
+    }
+
+    /* Base colors */
+    .atx-matrix-table td, .atx-matrix-table th { background-color: var(--matrix-cell-bg); }
+    /* Header row and first column (drug names) */
+    .atx-matrix-table thead th, .atx-matrix-table tbody th { background-color: var(--matrix-header-bg); }
+    /* Expanded group (cells only; header color remains fixed as requested) */
+    .atx-matrix-table .expanded-group { background-color: var(--matrix-expanded-bg) !important; }
+    /* Expanded group cells with a checkmark */
+    .atx-matrix-table .expanded-group.has-tick { background-color: #BAD899 !important; }
+    /* Collapsed group count cells with count > 0 */
+    .atx-matrix-table .group-count.has-count { background-color: var(--matrix-expanded-tick-bg) !important; }
+    /* Fixed cell sizes and alignment */
+    .atx-matrix-table { font-size: var(--matrix-font-size); table-layout: fixed; width: auto !important; }
+    .atx-matrix-table th, .atx-matrix-table td { 
+        width: var(--matrix-cell-width);
+        height: var(--matrix-cell-height);
+        max-width: var(--matrix-cell-width);
+        min-width: var(--matrix-cell-width);
+        vertical-align: middle; /* vertical center */
+        text-align: left; /* horizontal left align */
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        padding: 4px 6px; /* tighter padding for readability */
+        border-width: 1px !important; /* thinner borders */
+        box-sizing: border-box;
+    }
+    /* Center all body cells (except first column which is th) */
+    .atx-matrix-table tbody td { text-align: center; font-size: calc(var(--matrix-font-size) * 2); }
+    /* Allow group header cells to wrap text and show full label; keep fixed height by adding line-height clamp */
+    .atx-matrix-table thead th.group-col-header {
+        white-space: normal;
+        text-overflow: clip;
+        overflow: hidden;
+        word-break: break-word;
+        line-height: 1.1;
+    }
+    .atx-matrix-table tbody th {
+        width: var(--matrix-first-col-width);
+        max-width: var(--matrix-first-col-width);
+        min-width: var(--matrix-first-col-width);
+        box-sizing: border-box;
+    }
+    /* Sticky header row and first column with visible borders */
+    .atx-matrix-table thead th { position: sticky; top: 0; z-index: 2; box-shadow: inset 0 calc(var(--matrix-border-width) * -1) 0 0 var(--matrix-border-color), inset var(--matrix-border-width) 0 0 0 var(--matrix-border-color), inset calc(var(--matrix-border-width) * -1) 0 0 0 var(--matrix-border-color); }
+    .atx-matrix-table thead th:first-child {
+        position: sticky; top: 0; left: 0; z-index: 6;
+        width: var(--matrix-first-col-width);
+        min-width: var(--matrix-first-col-width);
+        max-width: var(--matrix-first-col-width);
+        box-sizing: border-box;
+    }
+    .atx-matrix-table tbody th { position: sticky; left: 0; z-index: 3; box-shadow: inset calc(var(--matrix-border-width) * -1) 0 0 0 var(--matrix-border-color); }
+
+    /* Expanded headers/cells keep fixed size; allow wrapping for expanded headers, keep nowrap for expanded body cells */
+    .atx-matrix-table thead th.expanded-group { white-space: normal; text-overflow: clip; overflow: hidden; word-break: break-word; line-height: 1.1; height: var(--matrix-cell-height); max-width: var(--matrix-cell-width); min-width: var(--matrix-cell-width); }
+    .atx-matrix-table td.expanded-group { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; height: var(--matrix-cell-height); max-width: var(--matrix-cell-width); min-width: var(--matrix-cell-width); }
+    .atx-matrix-table .cell-inner {
+        display: block;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    /* Wrapping overrides for headers and first-column cells: clamp to 2 lines to avoid resizing */
+    .atx-matrix-table thead th .cell-inner,
+    .atx-matrix-table tbody th .cell-inner {
+        white-space: normal;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 3;
+        line-height: 1.1;
+    }
+    /* Drag cursor states for right-mouse drag scroll */
+    #matrixWrapper.dragging-lmb { cursor: grabbing; }
+
+    /* Two-column indication modal table styling to match main matrix */
+    .indication-matrix { font-size: var(--matrix-font-size); }
+    .indication-matrix thead th, .indication-matrix tbody th { background-color: var(--matrix-header-bg); }
+    .indication-matrix tbody td { background-color: var(--matrix-cell-bg); }
+    .indication-matrix th, .indication-matrix td { border: var(--matrix-border-width) var(--matrix-border-style) var(--matrix-border-color) !important; }
+    .indication-matrix .drug-name-cell { min-width: 320px; max-width: 480px; }
+    .indication-matrix .count-cell { min-width: 120px; text-align: center; font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">ATX матрица</h1>
+<div class="row g-3">
+    <div class="col-md-2">
+        <h5 class="mb-2">1-й уровень</h5>
+        <div class="list-group" id="level1List">
+            {% for item in letters %}
+            <button type="button" class="list-group-item list-group-item-action" onclick="loadLevel2('{{ item.code }}', '{{ item.name|e }}')">{{ item.code }}: {{ item.name }}</button>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="col-md-2">
+        <h5 class="mb-2" id="level2Title">2-й уровень</h5>
+        <div class="list-group" id="level2List">
+            <div class="text-muted p-2">Выберите букву слева</div>
+        </div>
+    </div>
+    <div class="col-md-8 d-flex flex-column">
+        <div class="mb-2 text-muted small">Для перемещения по таблице, зажмите левую кнопку мыши и перетаскивайте курсор.</div>
+        <div class="mb-2 text-muted small">Клик по показанию откроет окно всех применяемых препаратов.</div>
+        <div class="matrix-wrapper flex-grow-1" id="matrixWrapper">
+            <div id="matrixArea"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function truncateByWords(text, maxLen) {
+        const s = String(text || '').trim();
+        if (s.length <= maxLen) return s;
+        const cut = s.slice(0, maxLen);
+        const i = cut.lastIndexOf(' ');
+        const base = i > 0 ? cut.slice(0, i) : cut;
+        return base.trim() + '…';
+    }
+
+    async function fetchJson(url) { const r = await fetch(url); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+
+    async function loadLevel2(letter, name) {
+        const list = document.getElementById('level2List');
+        list.innerHTML = '<div class="p-2">Загрузка…</div>';
+        try {
+            const data = await fetchJson(`/atx_children/${encodeURIComponent(letter)}`);
+            if (!data || data.length === 0) { list.innerHTML = '<div class="p-2">Нет данных</div>'; return; }
+            list.innerHTML = '';
+            data.forEach(child => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'list-group-item list-group-item-action';
+                btn.textContent = `${child.code}: ${child.name || ''}`.trim();
+                btn.onclick = () => loadGroupedMatrix(child.code, child.name || child.code);
+                list.appendChild(btn);
+            });
+        } catch (e) {
+            list.innerHTML = '<div class="p-2">Ошибка загрузки</div>';
+        }
+    }
+
+    // Build a grouped/expandable matrix for a given 2nd-level code like A01
+    async function loadGroupedMatrix(code2, readableName) {
+        const area = document.getElementById('matrixArea');
+        area.innerHTML = '<p>Загрузка…</p>';
+        try {
+            // Load full subtree using existing API to get list of ATX codes and applications columns
+            const api = await fetchJson(`/api/matrix/${encodeURIComponent(code2)}`);
+            // We need raw rows to group by GroupName; fetch client-side slice
+            const raw = await fetchJson(`/atx_children/${encodeURIComponent(code2)}`);
+            // We will fetch deeper leaves starting with code2 to get all rows
+            const allRows = await collectRowsRecursively(code2);
+            const rendered = renderGroupedMatrix(allRows, code2, readableName);
+            area.innerHTML = '';
+            area.appendChild(rendered);
+            // Attach info menu to ATX codes inside the rendered matrix
+            const atxSpans = area.querySelectorAll('.atx-code');
+            atxSpans.forEach(span => {
+                span.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    const code = span.textContent.trim();
+                    if (code) openAtxInfoMenu(code);
+                });
+            });
+        } catch (e) {
+            area.innerHTML = `<p>Ошибка: ${e.message}</p>`;
+        }
+    }
+
+    async function collectRowsRecursively(prefix) {
+        const data = await fetchJson(`/api/rows/${encodeURIComponent(prefix)}`);
+        return data.rows || [];
+    }
+
+    function renderGroupedMatrix(rows, prefix, readableName) {
+        // Build: columns are GroupName (collapsed), expandable to Application list under that group
+        // Rows: unique drugs within prefix
+        const byDrug = new Map(); // key: ATX_Code, value: { name, appsByGroup: Map<GroupName, Set<Application>> }
+        const groups = new Map(); // key: GroupName, value: Set<Application>
+
+        rows.forEach(r => {
+            if (!String(r.ATX_Code).startsWith(prefix)) return;
+            const atx = String(r.ATX_Code).trim();
+            const name = (r.DrugName || '').trim();
+            const group = (r.GroupName || '').trim();
+            const app = (r.Application || '').trim();
+            if (!atx) return;
+            if (!byDrug.has(atx)) byDrug.set(atx, { name, appsByGroup: new Map() });
+            const rec = byDrug.get(atx);
+            if (!rec.appsByGroup.has(group)) rec.appsByGroup.set(group, new Set());
+            if (app) rec.appsByGroup.get(group).add(app);
+            if (!groups.has(group)) groups.set(group, new Set());
+            if (app) groups.get(group).add(app);
+        });
+
+        const drugCodes = Array.from(byDrug.keys()).sort();
+        const groupNames = Array.from(groups.keys()).sort((a,b)=>a.localeCompare(b,'ru'));
+
+        // Build table
+        const table = document.createElement('table');
+        table.className = 'dataframe table table-bordered atx-matrix-table';
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        const corner = document.createElement('th');
+        corner.innerHTML = '<div class="cell-inner">Группы показаний →<br>Препарат ↓</div>';
+        corner.style.position = 'sticky';
+        corner.style.left = '0';
+        corner.style.top = '0';
+        corner.style.zIndex = '7';
+        headerRow.appendChild(corner);
+        groupNames.forEach(g => {
+            const th = document.createElement('th');
+            th.className = 'group-col-header';
+            th.dataset.group = g;
+            const label = (g || '\u00A0');
+            const wrap = document.createElement('div');
+            wrap.className = 'cell-inner';
+            wrap.textContent = label;
+            th.appendChild(wrap);
+            th.title = label; // always show tooltip for groups
+            th.onclick = () => toggleGroupInternal(table, decodeURIComponent(g));
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        drugCodes.forEach(code => {
+            const rec = byDrug.get(code);
+            const tr = document.createElement('tr');
+            const th = document.createElement('th');
+            const cleanName = (rec.name || '').trim();
+            const shortName = truncateByWords(cleanName, 23);
+            const namePart = cleanName ? `${shortName}` : '';
+            const titleAttr = cleanName && shortName !== cleanName ? ` title=\"${cleanName.replace(/\"/g,'&quot;')}\"` : '';
+            th.innerHTML = `<div class=\"cell-inner\">${namePart}${namePart ? '<br>' : ''}<span class=\"atx-code clickable\">${code}</span></div>`;
+            tr.appendChild(th);
+            groupNames.forEach(g => {
+                const td = document.createElement('td');
+                const apps = rec.appsByGroup.get(g) || new Set();
+                const count = apps.size;
+                td.dataset.group = g;
+                td.dataset.atx = code;
+                td.classList.add('group-count');
+                if (count > 0) {
+                    td.classList.add('has-count');
+                    td.textContent = String(count);
+                    td.onclick = () => toggleGroupInternal(table, decodeURIComponent(g));
+                } else {
+                    td.textContent = '';
+                }
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+
+        // Store expansion state
+        table.__groups = groupNames;
+        table.__rowsData = rows;
+        table.__prefix = prefix;
+        table.__expanded = new Set();
+
+        // Attach handler globally
+        window.toggleGroup = (gEnc) => toggleGroupInternal(table, decodeURIComponent(gEnc));
+
+        return table;
+    }
+
+    // Collapse a previously expanded group so only one group is expanded at a time
+    function collapseGroup(table, groupName) {
+        const headCells = Array.from(table.querySelectorAll('thead th'));
+        const groupIdx = headCells.findIndex(th => th.dataset && th.dataset.group === groupName);
+        if (groupIdx < 0) return;
+        let removeCount = 0;
+        for (let i = groupIdx + 1; i < headCells.length; i++) {
+            if (headCells[i].dataset && headCells[i].dataset.group !== undefined) break;
+            removeCount++;
+        }
+        for (let i = 0; i < removeCount; i++) {
+            table.querySelector('thead tr').children[groupIdx + 1].remove();
+            Array.from(table.querySelectorAll('tbody tr')).forEach(tr => tr.children[groupIdx + 1].remove());
+        }
+        // Remove arrow from the group header
+        const groupHead = table.querySelector('thead tr').children[groupIdx];
+        const inner = groupHead.querySelector('.cell-inner');
+        if (inner) { inner.textContent = inner.textContent.replace(/\s*→\s*$/,''); } else { groupHead.textContent = groupHead.textContent.replace(/\s*→\s*$/,''); }
+        table.__expanded.delete(groupName);
+    }
+
+    function toggleGroupInternal(table, groupName) {
+        const isExpanded = table.__expanded.has(groupName);
+        if (!isExpanded) {
+            // Collapse any other expanded group to ensure only one is expanded at a time
+            if (table.__expanded && table.__expanded.size > 0) {
+                const others = Array.from(table.__expanded).filter(g => g !== groupName);
+                others.forEach(g => collapseGroup(table, g));
+            }
+            // Expand: insert application columns to the right of this group
+            const apps = Array.from(new Set(table.__rowsData.filter(r => String(r.GroupName).trim() === groupName).map(r => String(r.Application).trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ru'));
+            // Find group index
+            const headCells = Array.from(table.querySelectorAll('thead th'));
+            const groupIdx = headCells.findIndex(th => th.dataset && th.dataset.group === groupName);
+            if (groupIdx < 0) return;
+            // Insert headers
+            const headRow = table.querySelector('thead tr');
+            apps.forEach((app, i) => {
+                const th = document.createElement('th');
+                const full = (app || '').trim();
+                const short = full && full.length > 28 ? (full.slice(0, 28) + '…') : full;
+                const wrap = document.createElement('div');
+                wrap.className = 'cell-inner';
+                wrap.textContent = short || '\u00A0';
+                th.appendChild(wrap);
+                th.title = full;
+                th.classList.add('expanded-group');
+                th.style.cursor = 'pointer';
+                th.addEventListener('click', () => openIndicationMatrixModal(full));
+                headRow.insertBefore(th, headRow.children[groupIdx + 1 + i]);
+            });
+            // Append right arrow (single) to the group header to indicate expansion
+            const groupHead = headRow.children[groupIdx];
+            const inner = groupHead.querySelector('.cell-inner');
+            const baseText = (inner ? inner.textContent : groupHead.textContent).replace(/\s*→\s*$/,'');
+            if (inner) { inner.textContent = baseText + ' →'; } else { groupHead.textContent = baseText + ' →'; }
+            // Keep header color fixed: do not mark the group header as expanded
+            // (No class change for header as per requirements)
+            // Insert cells per row
+            const tbRows = Array.from(table.querySelectorAll('tbody tr'));
+            tbRows.forEach(tr => {
+                const atx = tr.children[0].querySelector('.atx-code')?.textContent?.trim() || '';
+                apps.forEach((app, i) => {
+                    const td = document.createElement('td');
+                    // Check mark if present
+                    const has = table.__rowsData.some(r => String(r.ATX_Code).trim() === atx && String(r.GroupName).trim() === groupName && String(r.Application).trim() === app);
+                    td.textContent = has ? '✓' : '';
+                    td.classList.add('expanded-group');
+                    if (has) {
+                        td.classList.add('has-tick');
+                        td.style.cursor = 'pointer';
+                        td.title = 'ЛКМ: Открыть информацию о препарате | ПКМ: Список всех препаратов с данным показанием';
+                        td.addEventListener('click', (ev) => { ev.stopPropagation(); openAtxInfoMenu(atx, { highlightStudies: true }); });
+                        td.addEventListener('contextmenu', (ev) => { 
+                            ev.preventDefault(); 
+                            ev.stopPropagation(); 
+                            openIndicationGroupedModal(app); 
+                        });
+                    }
+                    tr.insertBefore(td, tr.children[groupIdx + 1 + i]);
+                });
+            });
+            table.__expanded.add(groupName);
+        } else {
+            // Collapse: remove inserted application columns
+            const headCells = Array.from(table.querySelectorAll('thead th'));
+            const groupIdx = headCells.findIndex(th => th.dataset && th.dataset.group === groupName);
+            if (groupIdx < 0) return;
+            // Count how many app columns were added by counting until next data-group or end
+            let removeCount = 0;
+            for (let i = groupIdx + 1; i < headCells.length; i++) {
+                if (headCells[i].dataset && headCells[i].dataset.group !== undefined) break;
+                removeCount++;
+            }
+            for (let i = 0; i < removeCount; i++) {
+                table.querySelector('thead tr').children[groupIdx + 1].remove();
+                Array.from(table.querySelectorAll('tbody tr')).forEach(tr => tr.children[groupIdx + 1].remove());
+            }
+            // Remove arrow from the group header
+            const groupHead = table.querySelector('thead tr').children[groupIdx];
+            const inner = groupHead.querySelector('.cell-inner');
+            if (inner) { inner.textContent = inner.textContent.replace(/\s*→\s*$/,''); } else { groupHead.textContent = groupHead.textContent.replace(/\s*→\s*$/,''); }
+            table.__expanded.delete(groupName);
+        }
+    }
+
+    // Modal menu for ATX code
+    function openAtxInfoMenu(atxCode, opts = {}) {
+        const highlightStudies = !!opts.highlightStudies;
+        const modal = document.getElementById('detailsModal');
+        const modalTitle = modal.querySelector('.modal-title');
+        const modalBody = modal.querySelector('.modal-body');
+        modalTitle.textContent = `ATX: ${atxCode}`;
+        modal.setAttribute('data-active-atx', atxCode);
+        const list = [
+            `<button type=\"button\" class=\"list-group-item list-group-item-action\" onclick=\"openAtxSubSection('${atxCode}','guidelines')\">Упоминания препарата в клинических рекомендациях</button>`,
+            `<button type=\"button\" class=\"list-group-item list-group-item-action\" onclick=\"openAtxSubSection('${atxCode}','advantages')\">Преимущества, заявленные производителем</button>`,
+            `<button type=\"button\" class=\"list-group-item list-group-item-action\" onclick=\"openAtxSubSection('${atxCode}','conferences')\">Упоминания препарата на недавних медицинских конференциях</button>`,
+            `<button type=\"button\" class=\"list-group-item list-group-item-action\" onclick=\"openAtxSubSection('${atxCode}','social')\">Упоминания препарата в профессиональных соцсетях</button>`,
+            `<button type=\"button\" class=\"list-group-item list-group-item-action\" onclick=\"openAtxSubSection('${atxCode}','reviews')\">Ключевые публикации и обзоры</button>`
+        ];
+        modalBody.innerHTML = `<div class=\"list-group\">${list.join('')}</div>`;
+        detailsModal.show();
+    }
+
+    function openAtxSubSection(atxCode, section) {
+        const modal = document.getElementById('detailsModal');
+        const modalTitle = modal.querySelector('.modal-title');
+        const modalBody = modal.querySelector('.modal-body');
+        const activeCode = modal.getAttribute('data-active-atx') || atxCode || '';
+        modalTitle.textContent = `ATX: ${activeCode}`;
+        let html = '';
+        if (section === 'guidelines') {
+            html = '<div class="text-center"><img src="/static/placeholders/упоминания.png" alt="Упоминания" class="img-fluid"></div>';
+        } else if (section === 'advantages') {
+            html = '<div class="text-center"><img src="/static/placeholders/преимущества.png" alt="Преимущества" class="img-fluid"></div>';
+        } else if (section === 'conferences') {
+            html = '<div><h6 class="mb-3">Недавние мед. конференции</h6><ul class="list-unstyled"><li><a href="https://rxrf.ru/search/273/?q=%D1%84%D0%BE%D1%81%D1%82%D0%B5%D1%80&o=date" target="_blank" rel="noopener noreferrer">Список упоминаний на rxrf.ru</a></li></ul></div>';
+        } else if (section === 'social') {
+            html = '<div><h6 class="mb-3">Профессиональные соцсети</h6><ul class="list-unstyled"><li><a href="http://a5.alfim.ru/" target="_blank" rel="noopener noreferrer">Digital Opinion Leaders (пример)</a></li></ul></div>';
+        } else if (section === 'reviews') {
+            const pdfUrl = '/static/placeholders/Обзор ФостерХОБЛ.pdf';
+            html = '<div class="mb-2">' +
+                  '<iframe class="w-100" style="height: 70vh; border: none;" src="' + pdfUrl + '" title="Обзор ФостерХОБЛ.pdf"></iframe>' +
+                  '</div>' +
+                  '<div class="text-center"><a href="' + pdfUrl + '" target="_blank" rel="noopener noreferrer" class="btn btn-primary">Открыть в новой вкладке</a></div>';
+        } else {
+            html = '<p>Скоро...</p>';
+        }
+        html += `<div class="mt-3"><button class="btn btn-sm btn-outline-secondary" onclick="openAtxInfoMenu('${activeCode}')">Назад</button></div>`;
+        modalBody.innerHTML = html;
+        detailsModal.show();
+    }
+
+    function loadDrugsForAtx(atxCode) {
+        const modal = document.getElementById('detailsModal');
+        const modalTitle = modal.querySelector('.modal-title');
+        const modalBody = modal.querySelector('.modal-body');
+        modalTitle.textContent = `Препараты для ATX: ${atxCode}`;
+        modalBody.innerHTML = '<p>Загрузка…</p>';
+        fetch(`/api/rows/${encodeURIComponent(atxCode)}`)
+            .then(r => r.json())
+            .then(data => {
+                const rows = (data && Array.isArray(data.rows)) ? data.rows : [];
+                const names = Array.from(new Set(rows.map(r => String(r.DrugName || '').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ru'));
+                if (names.length === 0) {
+                    modalBody.innerHTML = '<p>Нет данных.</p>';
+                    return;
+                }
+                let html = '<ul class="list-group">';
+                names.forEach(n => { html += `<li class="list-group-item">${n}</li>`; });
+                html += '</ul>';
+                html += `<div class=\"mt-3\"><button class=\"btn btn-sm btn-outline-secondary\" onclick=\"openAtxInfoMenu('${atxCode}')\">Назад к меню</button></div>`;
+                modalBody.innerHTML = html;
+            })
+            .catch(() => {
+                modalBody.innerHTML = '<p>Ошибка при загрузке.</p>';
+            });
+    }
+
+    // Open modal with two-column matrix for indication
+    function openIndicationMatrixModal(indicationFull) {
+        const modal = document.getElementById('detailsModal');
+        const modalTitle = modal.querySelector('.modal-title');
+        const modalBody = modal.querySelector('.modal-body');
+        modalTitle.textContent = 'Список всех препаратов для показания';
+        modalBody.innerHTML = '<p>Загрузка…</p>';
+        fetch(`/api/application-matrix/${encodeURIComponent(indicationFull)}`)
+            .then(r => r.json())
+            .then(data => {
+                const rows = Array.isArray(data?.rows) ? data.rows : [];
+                let html = '';
+                html += '<div class="table-responsive">';
+                html += '<table class="table table-bordered indication-matrix">';
+                html += '<thead><tr><th class="drug-name-cell">Препарат</th><th class="count-cell">' + indicationFull + '</th></tr></thead>';
+                html += '<tbody>';
+                if (rows.length === 0) {
+                    html += '<tr><td colspan="2">Нет данных</td></tr>';
+                } else {
+                    rows.forEach(r => {
+                        const name = (r.drug_name || '').trim();
+                        const code = (r.code || '').trim();
+                        const shown = truncateByWords(name, 23);
+                        const cnt = Number(r.count || 0);
+                        const tick = cnt > 0 ? '✓' : '';
+                        const codeHtml = code ? `<span class=\"atx-code clickable\" onclick=\"openAtxInfoMenu('${code}')\">${code}</span>` : '';
+                        const nameHtml = shown ? ` <span style=\"color:#222;font-weight:normal;\">${shown}</span>` : '';
+                        const drugCell = `${codeHtml}${nameHtml}`;
+                        html += `<tr><th>${drugCell}</th><td class=\"count-cell\">${tick}</td></tr>`;
+                    });
+                }
+                html += '</tbody></table></div>';
+                modalBody.innerHTML = html;
+                detailsModal.show();
+            })
+            .catch(() => { modalBody.innerHTML = '<p>Ошибка при загрузке.</p>'; });
+    }
+
+    // Open modal with grouped list by ATX level 2
+    function openIndicationGroupedModal(indicationFull) {
+        const modal = document.getElementById('detailsModal');
+        const modalTitle = modal.querySelector('.modal-title');
+        const modalBody = modal.querySelector('.modal-body');
+        modalTitle.textContent = 'Список всех препаратов с данным показанием';
+        modalBody.innerHTML = '<p>Загрузка…</p>';
+        
+        fetch(`/api/application-matrix/${encodeURIComponent(indicationFull)}`)
+            .then(r => r.json())
+            .then(matrixData => {
+                const rows = Array.isArray(matrixData?.rows) ? matrixData.rows : [];
+                
+                // Group drugs by ATX level 2 code
+                const grouped = new Map();
+                rows.forEach(r => {
+                    const code = (r.code || '').trim();
+                    if (code.length >= 3) {
+                        const level2Code = code.substring(0, 3);
+                        if (!grouped.has(level2Code)) {
+                            grouped.set(level2Code, []);
+                        }
+                        grouped.get(level2Code).push({
+                            code: code,
+                            name: (r.drug_name || '').trim(),
+                            count: Number(r.count || 0)
+                        });
+                    }
+                });
+                
+                // Get level 2 names for all unique level 2 codes
+                const level2Codes = Array.from(grouped.keys());
+                const level2Letters = new Set(level2Codes.map(c => c[0]));
+                const fetchPromises = Array.from(level2Letters).map(letter => 
+                    fetch(`/atx_children/${letter}`).then(r => r.json()).catch(() => [])
+                );
+                
+                return Promise.all(fetchPromises).then(level2Groups => {
+                    // Build level 2 code -> name mapping
+                    const level2Map = new Map();
+                    level2Groups.forEach(group => {
+                        if (Array.isArray(group)) {
+                            group.forEach(item => {
+                                if (item.code && item.code.length === 3) {
+                                    level2Map.set(item.code, item.name || item.code);
+                                }
+                            });
+                        }
+                    });
+                    
+                    // Sort groups by code
+                    const sortedGroups = Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+                    
+                    let html = '<div class="list-group">';
+                    sortedGroups.forEach(([level2Code, drugs]) => {
+                        const level2Name = level2Map.get(level2Code) || level2Code;
+                        const groupId = `group-${level2Code.replace(/[^A-Z0-9]/g, '-')}`;
+                        html += `<div class="list-group-item">`;
+                        html += `<div class="d-flex justify-content-between align-items-center" style="cursor: pointer;" onclick="toggleGroupedDrugs('${groupId}')">`;
+                        html += `<span><strong>${level2Code}</strong> ${level2Name} <span class="badge bg-secondary">(${drugs.length})</span></span>`;
+                        html += `<span id="${groupId}-arrow">▼</span>`;
+                        html += `</div>`;
+                        html += `<div id="${groupId}-drugs" style="display: none; margin-top: 8px; padding-left: 20px;">`;
+                        drugs.sort((a, b) => a.code.localeCompare(b.code)).forEach(drug => {
+                            const shownName = truncateByWords(drug.name, 30);
+                            const codeHtml = drug.code ? `<span class="atx-code clickable" onclick="openAtxInfoMenu('${drug.code}'); event.stopPropagation();">${drug.code}</span>` : '';
+                            const nameHtml = shownName ? ` ${shownName}` : '';
+                            html += `<div style="padding: 4px 0;">${codeHtml}${nameHtml}</div>`;
+                        });
+                        html += `</div>`;
+                        html += `</div>`;
+                    });
+                    html += '</div>';
+                    
+                    if (sortedGroups.length === 0) {
+                        html = '<p>Нет данных.</p>';
+                    }
+                    
+                    modalBody.innerHTML = html;
+                    detailsModal.show();
+                });
+            })
+        .catch(() => { 
+            modalBody.innerHTML = '<p>Ошибка при загрузке.</p>'; 
+        });
+    }
+
+    // Toggle grouped drugs visibility
+    function toggleGroupedDrugs(groupId) {
+        const drugsDiv = document.getElementById(`${groupId}-drugs`);
+        const arrowSpan = document.getElementById(`${groupId}-arrow`);
+        if (drugsDiv && arrowSpan) {
+            const isVisible = drugsDiv.style.display !== 'none';
+            drugsDiv.style.display = isVisible ? 'none' : 'block';
+            arrowSpan.textContent = isVisible ? '▼' : '▲';
+        }
+    }
+
+    // Right-mouse drag-to-scroll for desktop
+    (function enableMouseDragScroll(){
+        const wrapper = document.getElementById('matrixWrapper');
+        if (!wrapper) return;
+
+        let isMouseDown = false;
+        let isDragging = false;
+        let cancelClick = false;
+        let startX = 0, startY = 0;
+        let startScrollLeft = 0, startScrollTop = 0;
+        let previousUserSelect = '';
+        const dragThreshold = 3;
+
+        const clearSelection = () => {
+            document.body.style.userSelect = previousUserSelect;
+        };
+
+        const stopDrag = () => {
+            if (!isMouseDown) return;
+            isMouseDown = false;
+            if (isDragging) {
+                isDragging = false;
+                wrapper.classList.remove('dragging-lmb');
+                clearSelection();
+                // Prevent click event after drag ends
+                cancelClick = true;
+            }
+        };
+
+        wrapper.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return; // left mouse button only
+            isMouseDown = true;
+            isDragging = false;
+            cancelClick = false;
+            startX = e.clientX;
+            startY = e.clientY;
+            startScrollLeft = wrapper.scrollLeft;
+            startScrollTop = wrapper.scrollTop;
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isMouseDown) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            if (!isDragging) {
+                if (Math.abs(dx) < dragThreshold && Math.abs(dy) < dragThreshold) {
+                    return;
+                }
+                isDragging = true;
+                wrapper.classList.add('dragging-lmb');
+                previousUserSelect = document.body.style.userSelect;
+                document.body.style.userSelect = 'none';
+            }
+            wrapper.scrollLeft = startScrollLeft - dx;
+            wrapper.scrollTop = startScrollTop - dy;
+            e.preventDefault();
+        }, { passive: false });
+
+        window.addEventListener('mouseup', (e) => {
+            if (e.button !== 0) return stopDrag();
+            stopDrag();
+        });
+
+        window.addEventListener('blur', stopDrag);
+
+        wrapper.addEventListener('click', (e) => {
+            if (!cancelClick) return;
+            e.preventDefault();
+            e.stopPropagation();
+            cancelClick = false;
+        }, true);
+
+    })();
+</script>
+{% endblock %} 

@@ -1,0 +1,365 @@
+{% extends "base.html" %}
+
+{% block title %}Справочник лекарственных препаратов - Главная{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Horizontal accordion styles (keep if needed for subcategories or future use, otherwise remove) */
+    .horizontal-accordion {
+        display: flex;
+        flex-wrap: nowrap; /* Prevent wrapping */
+        overflow-x: auto; /* Enable horizontal scrolling if content overflows */
+        white-space: nowrap; /* Prevent text wrapping inside accordion items */
+        padding-bottom: 15px; /* Space for scrollbar if needed */
+    }
+    .horizontal-accordion .accordion-item {
+        flex-shrink: 0; /* Prevent items from shrinking */
+        width: 200px; /* Default width for collapsed item */
+        transition: width 0.3s ease-in-out;
+        border: 1px solid #dee2e6;
+        margin-right: 10px;
+        display: flex;
+        flex-direction: column;
+        vertical-align: top;
+    }
+    .horizontal-accordion .accordion-item.active {
+        width: 400px; /* Expanded width */
+    }
+    .horizontal-accordion .accordion-header {
+        width: 100%;
+        text-align: center;
+        padding: 10px;
+        cursor: pointer;
+        background-color: #f8f9fa;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .horizontal-accordion .accordion-collapse {
+        overflow: hidden;
+        width: 100%;
+        flex-grow: 1;
+    }
+    .horizontal-accordion .accordion-body {
+        padding: 15px;
+        white-space: normal; /* Allow text wrapping inside body */
+        flex-grow: 1;
+    }
+    .horizontal-accordion .list-group-item {
+        white-space: normal;
+    }
+    .matrix-wrapper {
+        overflow: auto; /* Adds scrollbars when content overflows */
+        height: 100%; /* Fill parent height */
+        max-height: calc(100vh - 120px); /* Adjust based on header/footer height */
+        max-width: 100%; /* Ensure it resizes with its parent */
+        cursor: grab;
+        border: 1px solid #dee2e6; /* Added border */
+        padding: 10px; /* Optional: add some padding inside the border */
+    }
+    .matrix-wrapper.is-dragging {
+        cursor: grabbing;
+    }
+    /* Custom styles for nested lists */
+    .nested-list-group {
+        margin-top: 10px;
+        margin-left: 15px; /* Indent nested lists */
+    }
+    .hidden-col {
+        display: none !important;
+    }
+    .matrix-toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Справочник лекарственных препаратов</h1>
+
+<div class="mt-4 row flex-grow-1">
+    <div class="col-md-2 d-flex flex-column">
+        <h5 class="mb-3">Категории</h5>
+        <div class="list-group flex-grow-1 overflow-auto" id="mainCategoriesList">
+            {% for category in categories %}
+            <button type="button" class="list-group-item list-group-item-action" onclick="loadSubcategoriesAccordion(encodeURIComponent('{{ category.code }}'), encodeURIComponent('{{ category.name }}'))">
+                {{ category.code }}: {{ category.name }}
+            </button>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="col-md-3 d-flex flex-column">
+        <h5 class="mb-3" id="selectedCategoryTitle">Выберите категорию</h5>
+            <div class="accordion accordion-flush flex-grow-1 overflow-auto" id="subcategoriesAndAtxAccordion">
+        </div>
+    </div>
+    <div class="col-md-7 d-flex flex-column">
+        <div class="matrix-wrapper flex-grow-1" id="matrixWrapper">
+            <div class="mt-2 matrix-toolbar">
+                <button id="toggleAppsBtn" class="btn btn-sm btn-outline-primary" disabled>Показать детали показаний</button>
+            </div>
+            <div class="mt-2" id="matrixDisplayArea">
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let historySelectedGroups = []; // Client-side history
+
+    const matrixWrapper = document.getElementById('matrixWrapper');
+    const subcategoriesAndAtxAccordion = document.getElementById('subcategoriesAndAtxAccordion');
+    const selectedCategoryTitle = document.getElementById('selectedCategoryTitle');
+    const toggleAppsBtn = document.getElementById('toggleAppsBtn');
+
+    let isDragging = false;
+    let startX;
+    let startY;
+    let scrollLeft;
+    let scrollTop;
+
+    matrixWrapper.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        matrixWrapper.classList.add('is-dragging');
+        startX = e.pageX - matrixWrapper.offsetLeft;
+        startY = e.pageY - matrixWrapper.offsetTop;
+        scrollLeft = matrixWrapper.scrollLeft;
+        scrollTop = matrixWrapper.scrollTop;
+    });
+
+    matrixWrapper.addEventListener('mouseleave', () => {
+        isDragging = false;
+        matrixWrapper.classList.remove('is-dragging');
+    });
+
+    matrixWrapper.addEventListener('mouseup', () => {
+        isDragging = false;
+        matrixWrapper.classList.remove('is-dragging');
+    });
+
+    matrixWrapper.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        e.preventDefault();
+        const x = e.pageX - matrixWrapper.offsetLeft;
+        const y = e.pageY - matrixWrapper.offsetTop;
+        const walkX = (x - startX) * 2; // Multiplier for faster scroll
+        const walkY = (y - startY) * 2; // Multiplier for faster scroll
+        matrixWrapper.scrollLeft = scrollLeft - walkX;
+        matrixWrapper.scrollTop = scrollTop - walkY;
+    });
+
+    function loadSubcategoriesAccordion(category, categoryName) {
+        window.__lastLoadedCategory = category;
+        const nameStr = categoryName ? ` ${decodeURIComponent(categoryName)}` : '';
+        selectedCategoryTitle.textContent = `Категория ${decodeURIComponent(category)}${nameStr}`;
+        subcategoriesAndAtxAccordion.innerHTML = '<p class="p-3">Загрузка подкатегорий...</p>';
+
+        fetch(`/subcategories/${category}`)
+            .then(response => response.json())
+            .then(subcategories => {
+                subcategoriesAndAtxAccordion.innerHTML = '';
+                if (subcategories.length === 0) {
+                    subcategoriesAndAtxAccordion.innerHTML = '<p class="p-3">Нет подкатегорий для отображения.</p>';
+                    return;
+                }
+                subcategories.forEach(subcat => {
+                    const subcatAccordionItem = document.createElement('div');
+                    subcatAccordionItem.className = 'accordion-item';
+                    subcatAccordionItem.innerHTML = `
+                        <h2 class="accordion-header" id="subcatHeading${subcat.code}">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#subcatCollapse${subcat.code}" aria-expanded="false" aria-controls="subcatCollapse${subcat.code}" onclick="loadChildren(encodeURIComponent('${subcat.code}'))">
+                                ${subcat.code} ${subcat.name}
+                            </button>
+                        </h2>
+                        <div id="subcatCollapse${subcat.code}" class="accordion-collapse collapse" aria-labelledby="subcatHeading${subcat.code}" data-bs-parent="#subcategoriesAndAtxAccordion">
+                            <div class="accordion-body">
+                                <div class=\"list-group nested-list-group\" id=\"childrenList-${subcat.code}\">
+                                    <!-- ATX Codes will be loaded here -->
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    subcategoriesAndAtxAccordion.appendChild(subcatAccordionItem);
+                    // Auto-load children for default expanded state
+                    loadChildren(encodeURIComponent(subcat.code));
+                });
+            })
+            .catch(error => {
+                console.error('Error loading subcategories:', error);
+                subcategoriesAndAtxAccordion.innerHTML = '<p class="p-3">Ошибка при загрузке подкатегорий.</p>';
+            });
+    }
+
+    // This function now handles loading children for ATX codes (second level and deeper)
+    function loadChildren(parentCode) {
+        const childrenListId = `childrenList-${decodeURIComponent(parentCode)}`;
+        const childrenList = document.getElementById(childrenListId);
+
+        // Always clear the list before loading new data for the childrenList
+        childrenList.innerHTML = '<p>Загрузка данных...</p>'; 
+        
+        fetch(`/atx_children/${parentCode}`)
+            .then(response => response.json())
+            .then(children => {
+                childrenList.innerHTML = ''; // Clear loading message
+                if (children.length === 0) {
+                    childrenList.innerHTML = '<p>Нет данных для отображения.</p>';
+                    return;
+                }
+                children.forEach(child => {
+                    const listItem = document.createElement('div');
+                    listItem.className = 'list-group-item list-group-item-action';
+                    listItem.textContent = `${child.code} ${child.name}`;
+
+                    // Check if this child has further children (based on code length)
+                    let hasChildren = false;
+                    // Be more conservative about what constitutes having children
+                    // Most ATX codes only go to 5 characters meaningfully (e.g., A01AB)
+                    if (child.code.length < 5) { 
+                        hasChildren = true;
+                    }
+
+                    if (hasChildren) {
+                        // Add a container for nested children (initially collapsed)
+                        const nestedChildrenContainer = document.createElement('div');
+                        nestedChildrenContainer.className = 'collapse nested-list-group';
+                        nestedChildrenContainer.id = `childrenList-${child.code}`;
+                        listItem.appendChild(nestedChildrenContainer);
+
+                        // Make the entire list item clickable to toggle children
+                        listItem.onclick = (e) => {
+                            e.stopPropagation(); // Prevent parent item click
+                            const bsCollapse = bootstrap.Collapse.getInstance(nestedChildrenContainer) || new bootstrap.Collapse(nestedChildrenContainer, { toggle: false });
+                            
+                            if (nestedChildrenContainer.classList.contains('show')) {
+                                bsCollapse.hide();
+                            } else {
+                                bsCollapse.show();
+                                loadChildren(encodeURIComponent(child.code)); // Recursive call
+                            }
+                        };
+
+                    } else {
+                        // If no more children, this is a leaf node, click to show matrix
+                        listItem.onclick = (e) => { e.stopPropagation(); showMatrix(child.code); };
+                    }
+                    childrenList.appendChild(listItem);
+                });
+            })
+            .catch(error => {
+                console.error('Error loading children:', error);
+                childrenList.innerHTML = '<p>Ошибка при загрузке данных.</p>';
+            });
+    }
+    
+    function showMatrix(groupName) { // Renamed subcategory to groupName as it can now be an ATX code
+        const matrixDisplayArea = document.getElementById('matrixDisplayArea');
+        matrixDisplayArea.innerHTML = '<p>Загрузка матрицы...</p>'; // Loading indicator
+
+        fetch(`/api/matrix/${groupName}`)
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(errorData => { throw new Error(errorData.error || 'Неизвестная ошибка'); });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.matrix_html) {
+                    matrixDisplayArea.innerHTML = data.matrix_html;
+                    // Add to history if not already present
+                    if (!historySelectedGroups.includes(data.group_name_used_for_matrix)) {
+                        historySelectedGroups.push(data.group_name_used_for_matrix);
+                    }
+                    // Attach click handlers for ATX codes in the rendered matrix
+                    const atxSpans = matrixDisplayArea.querySelectorAll('.atx-code');
+                    atxSpans.forEach(span => {
+                        span.addEventListener('click', () => {
+                            const code = span.textContent.trim();
+                            if (code) {
+                                showDrugDetails(code);
+                            }
+                        });
+                    });
+                    // Collapse application columns by default, leaving only the summary column visible
+                    setupApplicationColumnsToggle(matrixDisplayArea, data.application_columns || [], data.summary_column || null);
+                } else {
+                    matrixDisplayArea.innerHTML = '<p>Нет данных для отображения.</p>';
+                }
+            })
+            .catch(error => {
+                console.error('Error loading matrix:', error);
+                matrixDisplayArea.innerHTML = `<p>Ошибка при загрузке матрицы: ${error.message}</p>`;
+            });
+    }
+
+    function setupApplicationColumnsToggle(rootEl, applicationColumns, summaryColumn) {
+        const table = rootEl.querySelector('table');
+        if (!table) {
+            toggleAppsBtn.disabled = true;
+            return;
+        }
+        const headerCells = Array.from(table.querySelectorAll('thead th'));
+        const bodyRows = Array.from(table.querySelectorAll('tbody tr'));
+
+        // Map column index by header text content
+        const headerTextToIndex = {};
+        headerCells.forEach((th, idx) => {
+            const txt = th.textContent.trim();
+            headerTextToIndex[txt] = idx;
+        });
+
+        // Identify indices for application columns and summary column
+        const appIdx = [];
+        applicationColumns.forEach(app => {
+            const idx = headerTextToIndex[app];
+            if (typeof idx === 'number') appIdx.push(idx);
+        });
+        const summaryIdx = typeof headerTextToIndex[summaryColumn] === 'number' ? headerTextToIndex[summaryColumn] : null;
+
+        // Helper to show/hide columns
+        const setColsVisibility = (indices, hidden) => {
+            headerCells.forEach((th, idx) => {
+                if (indices.includes(idx)) {
+                    if (hidden) th.classList.add('hidden-col'); else th.classList.remove('hidden-col');
+                }
+            });
+            bodyRows.forEach(tr => {
+                const cells = Array.from(tr.children);
+                cells.forEach((td, idx) => {
+                    if (indices.includes(idx)) {
+                        if (hidden) td.classList.add('hidden-col'); else td.classList.remove('hidden-col');
+                    }
+                });
+            });
+        };
+
+        // Expand apps by default
+        if (appIdx.length > 0) {
+            setColsVisibility(appIdx, false);
+            if (summaryIdx !== null) setColsVisibility([summaryIdx], false);
+            toggleAppsBtn.disabled = false;
+        } else {
+            toggleAppsBtn.disabled = true;
+        }
+
+        // Toggle handler
+        let expanded = true;
+        toggleAppsBtn.textContent = 'Свернуть детали показаний';
+        toggleAppsBtn.onclick = () => {
+            expanded = !expanded;
+            if (expanded) {
+                setColsVisibility(appIdx, false);
+                toggleAppsBtn.textContent = 'Свернуть детали показаний';
+            } else {
+                setColsVisibility(appIdx, true);
+                toggleAppsBtn.textContent = 'Показать детали показаний';
+            }
+        };
+    }
+
+</script>
+{% endblock %} 

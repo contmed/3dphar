@@ -1,0 +1,37 @@
+:root {
+	/* ATX matrix colors */
+	--matrix-cell-bg: #e8e8e8;
+	--matrix-header-bg: #d6e0eb;
+	--matrix-expanded-bg: #e1edff;
+	--matrix-expanded-tick-bg: #9dc76d;
+	--matrix-collapsed-hascnt-bg: #f6f6f6;
+
+	/* ATX matrix sizing */
+	--matrix-cell-width: 84px;
+	--matrix-cell-height: 57px;
+	--matrix-first-col-width: 136px;
+	--matrix-font-size: 14px;
+
+	/* ATX matrix borders */
+	--matrix-border-color: #333333;
+	--matrix-border-width: 1.5px; /* inner cell borders */
+	--matrix-border-style: solid;
+	--matrix-border-outer-width: 2px; /* outer table border */
+}
+
+/* Table border settings (uses variables above) */
+.table-responsive table,
+.dataframe,
+.table,
+.table-bordered {
+	border-collapse: collapse !important;
+	border: var(--matrix-border-outer-width) var(--matrix-border-style) var(--matrix-border-color) !important;
+}
+
+.table-responsive table th, .table-responsive table td,
+.dataframe th, .dataframe td,
+.table th, .table td,
+.table-bordered th, .table-bordered td,
+.atx-matrix-table th, .atx-matrix-table td {
+	border: var(--matrix-border-width) var(--matrix-border-style) var(--matrix-border-color) !important;
+} 

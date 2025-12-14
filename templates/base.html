@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Справочник лекарственных препаратов{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/theme.css" rel="stylesheet">
+    <style>
+        html {
+            overflow-y: scroll;
+            font-family: Helvetica, Arial, sans-serif;
+        }
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+        }
+        body.modal-open {
+            padding-right: 0 !important;
+        }
+        .category-card {
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .category-card:hover {
+            transform: scale(1.05);
+        }
+        /* Явные границы для всех таблиц, которые генерирует pandas Styler и для всех th/td */
+        .table-responsive table,
+        .dataframe,
+        .table,
+        .table-bordered {
+            border-collapse: collapse !important;
+            border: 2px solid #333 !important;
+        }
+        .table-responsive table th, .table-responsive table td,
+        .dataframe th, .dataframe td,
+        .table th, .table td,
+        .table-bordered th, .table-bordered td,
+        th, td {
+            border: 1.5px solid #333 !important;
+            padding: 8px;
+            text-align: left;
+            font-family: Helvetica, Arial, sans-serif;
+        }
+        /* Центрирование чисел в ячейках матрицы */
+        .dataframe td {
+            text-align: center;
+            vertical-align: middle;
+        }
+        /* Усиление специфичности, чтобы перебить стили Styler */
+        #matrixDisplayArea .dataframe td {
+            text-align: center !important;
+            vertical-align: middle !important;
+        }
+        .matrix-table th {
+            background-color: #f2f2f2;
+        }
+        .clickable {
+            cursor: pointer;
+            color: #0d6efd;
+        }
+        .clickable:hover {
+            text-decoration: underline;
+        }
+        .search-container {
+            margin: 20px 0;
+        }
+        .search-autocomplete {
+            position: relative;
+            min-width: 280px;
+        }
+        .search-autocomplete .search-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 2000;
+            background-color: #fff;
+            border: 1px solid rgba(0, 0, 0, 0.15);
+            border-top: none;
+            border-radius: 0 0 0.5rem 0.5rem;
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+            max-height: 320px;
+            overflow-y: auto;
+            display: none;
+        }
+        .search-autocomplete .search-suggestions.show {
+            display: block;
+        }
+        .search-autocomplete .search-suggestions-group {
+            padding: 6px 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            color: #6c757d;
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .search-autocomplete .search-suggestion-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .search-autocomplete .search-suggestion-item:not(:last-child) {
+            border-bottom: 1px solid #f1f1f1;
+        }
+        .search-autocomplete .search-suggestion-item:hover,
+        .search-autocomplete .search-suggestion-item:focus {
+            background-color: #eef4ff;
+        }
+        .search-autocomplete .suggestion-label {
+            font-weight: 600;
+            color: #0d6efd;
+        }
+        .search-autocomplete .suggestion-subtext {
+            font-size: 0.85rem;
+            color: #555;
+        }
+        .modal-dialog {
+            max-width: 800px;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">Справочник лекарств</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNavbar" aria-controls="mainNavbar" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="mainNavbar">
+                <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                    <li class="nav-item"><a class="nav-link" href="/atx-matrix">ATX матрица</a></li>
+                </ul>
+                <form class="d-flex ms-auto align-items-start" role="search" onsubmit="event.preventDefault(); openSearchResults(this.querySelector('#searchInput').value);">
+                    <div class="search-autocomplete me-2 flex-grow-0">
+                        <input type="text" id="searchInput" class="form-control w-160" placeholder="Поиск препаратов и показаний..." autocomplete="off">
+                        <div id="searchSuggestions" class="search-suggestions" role="listbox" aria-label="Подсказки поиска"></div>
+                    </div>
+                    <button id="searchSubmit" class="btn btn-success" type="button" aria-label="Искать">✓</button>
+                </form>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        {% block content %}{% endblock %}
+    </div>
+
+    <div class="modal fade" id="detailsModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Global modal instance
+        const detailsModal = new bootstrap.Modal(document.getElementById('detailsModal'));
+
+        // Helper to unwrap outer parentheses repeatedly
+        function unwrapParens(text) {
+            let s = (text || '').trim();
+            while (s.startsWith('(') && s.endsWith(')')) {
+                s = s.slice(1, -1).trim();
+            }
+            return s;
+        }
+
+        function openApplicationModal(application) {
+            if (typeof openIndicationGroupedModal === 'function') {
+                openIndicationGroupedModal(application);
+                return;
+            }
+            if (typeof openIndicationMatrixModal === 'function') {
+                openIndicationMatrixModal(application);
+                return;
+            }
+            showApplicationDetails(application);
+        }
+
+        function escapeHtml(str) {
+            return String(str ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function escapeForSingleQuote(str) {
+            return String(str ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        }
+
+        // Search functionality
+        let searchSuggestionDebounceTimer = null;
+        let currentSuggestionAbortController = null;
+        const MAX_SUGGESTIONS_PER_GROUP = 8;
+
+        function openSearchResults(query) {
+            const q = (query || '').trim();
+            if (q.length < 2) {
+                hideSearchSuggestions();
+                return;
+            }
+            hideSearchSuggestions();
+            if (currentSuggestionAbortController) {
+                currentSuggestionAbortController.abort();
+                currentSuggestionAbortController = null;
+            }
+            fetch(`/search?q=${encodeURIComponent(q)}`)
+                .then(response => response.json())
+                .then(data => {
+                    const modal = document.getElementById('detailsModal');
+                    const modalTitle = modal.querySelector('.modal-title');
+                    const modalBody = modal.querySelector('.modal-body');
+
+                    const drugs = Array.isArray(data?.drugs) ? data.drugs : [];
+                    const applications = Array.isArray(data?.applications) ? data.applications : [];
+
+                    modalTitle.textContent = 'Результаты поиска';
+                    modalBody.innerHTML = '';
+
+                    let hasContent = false;
+
+                    if (drugs.length > 0) {
+                        hasContent = true;
+                        const heading = document.createElement('h6');
+                        heading.className = 'mb-2';
+                        heading.textContent = 'Препараты';
+                        modalBody.appendChild(heading);
+
+                        const list = document.createElement('div');
+                        list.className = 'list-group mb-3';
+                        drugs.forEach(({code, name}) => {
+                            const safeCode = String(code || '').trim();
+                            if (!safeCode) return;
+                            const btn = document.createElement('button');
+                            btn.type = 'button';
+                            btn.className = 'list-group-item list-group-item-action';
+
+                            const codeSpan = document.createElement('span');
+                            codeSpan.className = 'fw-semibold text-primary';
+                            codeSpan.textContent = safeCode;
+                            btn.appendChild(codeSpan);
+                            const cleanName = (name || '').trim();
+                            if (cleanName) {
+                                btn.appendChild(document.createTextNode(` - ${cleanName}`));
+                            }
+                            btn.addEventListener('click', () => {
+                                detailsModal.hide();
+                                openAtxInfoMenu(safeCode);
+                            });
+                            list.appendChild(btn);
+                        });
+                        modalBody.appendChild(list);
+                    }
+
+                    if (applications.length > 0) {
+                        hasContent = true;
+                        const heading = document.createElement('h6');
+                        heading.className = 'mb-2';
+                        heading.textContent = 'Показания';
+                        modalBody.appendChild(heading);
+
+                        const list = document.createElement('div');
+                        list.className = 'list-group';
+                        applications.forEach(app => {
+                            const cleanApp = String(app || '').trim();
+                            if (!cleanApp) return;
+                            const btn = document.createElement('button');
+                            btn.type = 'button';
+                            btn.className = 'list-group-item list-group-item-action';
+                            btn.textContent = cleanApp;
+                            btn.addEventListener('click', () => {
+                                detailsModal.hide();
+                                openApplicationModal(cleanApp);
+                            });
+                            list.appendChild(btn);
+                        });
+                        modalBody.appendChild(list);
+                    }
+
+                    if (!hasContent) {
+                        const empty = document.createElement('p');
+                        empty.textContent = 'Ничего не найдено';
+                        modalBody.appendChild(empty);
+                    }
+
+                    detailsModal.show();
+                })
+                .catch(() => {
+                    const modal = document.getElementById('detailsModal');
+                    const modalTitle = modal.querySelector('.modal-title');
+                    const modalBody = modal.querySelector('.modal-body');
+                    modalTitle.textContent = 'Результаты поиска';
+                    modalBody.innerHTML = '<p>Ошибка при загрузке.</p>';
+                    detailsModal.show();
+                });
+        }
+
+        function hideSearchSuggestions() {
+            if (!searchSuggestionsEl) return;
+            searchSuggestionsEl.classList.remove('show');
+            searchSuggestionsEl.innerHTML = '';
+            searchSuggestionsEl.dataset.hasContent = 'false';
+            if (searchInputEl) {
+                searchInputEl.setAttribute('aria-expanded', 'false');
+            }
+        }
+
+        function renderSearchSuggestions(data) {
+            if (!searchSuggestionsEl || !searchInputEl) return;
+            const drugs = Array.isArray(data?.drugs) ? data.drugs : [];
+            const applications = Array.isArray(data?.applications) ? data.applications : [];
+
+            const fragment = document.createDocumentFragment();
+            let hasContent = false;
+
+            if (drugs.length > 0) {
+                hasContent = true;
+                const groupLabel = document.createElement('div');
+                groupLabel.className = 'search-suggestions-group';
+                groupLabel.textContent = 'Препараты';
+                fragment.appendChild(groupLabel);
+
+                drugs.slice(0, MAX_SUGGESTIONS_PER_GROUP).forEach(({code, name}) => {
+                    const safeCode = String(code || '').trim();
+                    if (!safeCode) return;
+                    const item = document.createElement('div');
+                    item.className = 'search-suggestion-item';
+                    item.setAttribute('role', 'option');
+
+                    const label = document.createElement('div');
+                    label.className = 'suggestion-label';
+                    const cleanName = (name || '').trim();
+                    label.textContent = cleanName ? `${safeCode} - ${cleanName}` : safeCode;
+                    item.appendChild(label);
+
+                    const subText = document.createElement('div');
+                    subText.className = 'suggestion-subtext';
+                    subText.textContent = 'Препарат';
+                    item.appendChild(subText);
+
+                    item.addEventListener('mousedown', (ev) => ev.preventDefault());
+                    item.addEventListener('click', () => {
+                        searchInputEl.value = safeCode;
+                        hideSearchSuggestions();
+                        detailsModal.hide();
+                        openAtxInfoMenu(safeCode);
+                    });
+
+                    fragment.appendChild(item);
+                });
+            }
+
+            if (applications.length > 0) {
+                hasContent = true;
+                const groupLabel = document.createElement('div');
+                groupLabel.className = 'search-suggestions-group';
+                groupLabel.textContent = 'Показания';
+                fragment.appendChild(groupLabel);
+
+                applications.slice(0, MAX_SUGGESTIONS_PER_GROUP).forEach(app => {
+                    const cleanApp = String(app || '').trim();
+                    if (!cleanApp) return;
+                    const item = document.createElement('div');
+                    item.className = 'search-suggestion-item';
+                    item.setAttribute('role', 'option');
+
+                    const label = document.createElement('div');
+                    label.className = 'suggestion-label';
+                    label.textContent = cleanApp;
+                    item.appendChild(label);
+
+                    const subText = document.createElement('div');
+                    subText.className = 'suggestion-subtext';
+                    subText.textContent = 'Показание';
+                    item.appendChild(subText);
+
+                    item.addEventListener('mousedown', (ev) => ev.preventDefault());
+                    item.addEventListener('click', () => {
+                        searchInputEl.value = cleanApp;
+                        hideSearchSuggestions();
+                        detailsModal.hide();
+                        openApplicationModal(cleanApp);
+                    });
+
+                    fragment.appendChild(item);
+                });
+            }
+
+            if (!hasContent) {
+                hideSearchSuggestions();
+                return;
+            }
+
+            searchSuggestionsEl.innerHTML = '';
+            searchSuggestionsEl.appendChild(fragment);
+            searchSuggestionsEl.classList.add('show');
+            searchSuggestionsEl.dataset.hasContent = 'true';
+            searchSuggestionsEl.scrollTop = 0;
+            searchInputEl.setAttribute('aria-expanded', 'true');
+        }
+
+        function requestSearchSuggestions(query) {
+            if (!searchSuggestionsEl) return;
+            if (currentSuggestionAbortController) {
+                currentSuggestionAbortController.abort();
+            }
+            const controller = new AbortController();
+            currentSuggestionAbortController = controller;
+            fetch(`/search?q=${encodeURIComponent(query)}`, { signal: controller.signal })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network error');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (controller !== currentSuggestionAbortController) {
+                        return;
+                    }
+                    const currentValue = (searchInputEl?.value || '').trim();
+                    if (currentValue.length < 2 || currentValue !== query) {
+                        return;
+                    }
+                    renderSearchSuggestions(data);
+                })
+                .catch(err => {
+                    if (controller.signal.aborted) {
+                        return;
+                    }
+                    hideSearchSuggestions();
+                })
+                .finally(() => {
+                    if (controller === currentSuggestionAbortController) {
+                        currentSuggestionAbortController = null;
+                    }
+                });
+        }
+
+        const searchInputEl = document.getElementById('searchInput');
+        const searchSubmitBtn = document.getElementById('searchSubmit');
+        const searchSuggestionsEl = document.getElementById('searchSuggestions');
+        const searchFormEl = document.querySelector('form[role="search"]');
+
+        if (searchSuggestionsEl) {
+            searchSuggestionsEl.dataset.hasContent = 'false';
+        }
+
+        if (searchInputEl) {
+            searchInputEl.setAttribute('aria-autocomplete', 'list');
+            searchInputEl.setAttribute('aria-expanded', 'false');
+            searchInputEl.setAttribute('role', 'combobox');
+            searchInputEl.setAttribute('aria-owns', 'searchSuggestions');
+
+            searchInputEl.addEventListener('input', () => {
+                const value = (searchInputEl.value || '').trim();
+                if (searchSuggestionDebounceTimer) {
+                    clearTimeout(searchSuggestionDebounceTimer);
+                }
+                if (value.length < 2) {
+                    if (currentSuggestionAbortController) {
+                        currentSuggestionAbortController.abort();
+                        currentSuggestionAbortController = null;
+                    }
+                    hideSearchSuggestions();
+                    return;
+                }
+                searchSuggestionDebounceTimer = setTimeout(() => {
+                    requestSearchSuggestions(value);
+                }, 220);
+            });
+
+            searchInputEl.addEventListener('focus', () => {
+                if (searchSuggestionsEl && searchSuggestionsEl.dataset.hasContent === 'true') {
+                    searchSuggestionsEl.classList.add('show');
+                    searchInputEl.setAttribute('aria-expanded', 'true');
+                }
+            });
+
+            searchInputEl.addEventListener('blur', () => {
+                setTimeout(() => {
+                    hideSearchSuggestions();
+                }, 150);
+            });
+
+            searchInputEl.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    hideSearchSuggestions();
+                    return;
+                }
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    openSearchResults(searchInputEl.value);
+                }
+            });
+        }
+
+        if (searchSubmitBtn) {
+            searchSubmitBtn.addEventListener('click', function() {
+                openSearchResults(searchInputEl ? searchInputEl.value : '');
+            });
+        }
+
+        if (searchFormEl) {
+            document.addEventListener('click', (event) => {
+                if (!searchFormEl.contains(event.target)) {
+                    hideSearchSuggestions();
+                }
+            });
+        }
+
+        // Show drug details
+        function showDrugDetails(atxCode) {
+            fetch(`/drug/${encodeURIComponent(atxCode)}`)
+                .then(response => response.json())
+                .then(data => {
+                    const modal = document.getElementById('detailsModal');
+                    const modalTitle = modal.querySelector('.modal-title');
+                    const modalBody = modal.querySelector('.modal-body');
+                    // Найти название препарата по коду среди всех строк таблицы (если есть)
+                    let drugName = '';
+                    document.querySelectorAll('th.row_heading .atx-code').forEach(el => {
+                        if (el.textContent.trim() === atxCode) {
+                            const prev = el.parentElement.previousSibling;
+                            if (prev && prev.nodeType === 1 && prev.tagName === 'SPAN') {
+                                drugName = prev.textContent.trim();
+                            } else {
+                                // Альтернативно: ищем в родителе
+                                const parent = el.parentElement;
+                                if (parent && parent.innerHTML.includes('<br>')) {
+                                    drugName = parent.innerHTML.split('<br>')[0].replace(/<[^>]+>/g, '').trim();
+                                }
+                            }
+                        }
+                    });
+                    const cleanName = unwrapParens(drugName);
+                    if (cleanName) {
+                        modalTitle.textContent = `${atxCode} (${cleanName})`;
+                    } else {
+                        modalTitle.textContent = data.atx_code;
+                    }
+                    let html = '<h6>Показания к применению:</h6><ul>';
+                    data.applications.forEach(app => {
+                        const safeAttr = escapeForSingleQuote(app);
+                        const safeLabel = escapeHtml(app);
+                        html += `<li class="clickable" onclick="openApplicationModal('${safeAttr}')">${safeLabel}</li>`;
+                    });
+                    html += '</ul>';
+                    modalBody.innerHTML = html;
+                    detailsModal.show();
+                });
+        }
+
+        // Show application details
+        function showApplicationDetails(application) {
+            fetch(`/application/${encodeURIComponent(application)}`)
+                .then(response => response.json())
+                .then(data => {
+                    const modal = document.getElementById('detailsModal');
+                    const modalTitle = modal.querySelector('.modal-title');
+                    const modalBody = modal.querySelector('.modal-body');
+                    
+                    modalTitle.textContent = data.application;
+                    
+                    let html = '<h6>Препараты:</h6><ul>';
+                    data.drugs.forEach(drug => {
+                        if (typeof drug === 'string') {
+                            html += `<li class=\"clickable\" onclick=\"showDrugDetails('${drug}')\">${drug}</li>`;
+                        } else {
+                            const cleanName = unwrapParens(drug.name);
+                            html += `<li class=\"clickable\" onclick=\"showDrugDetails('${drug.code}')\">${drug.code} <span style=\"color:#222; font-weight:normal;\">${cleanName ? '(' + cleanName + ')' : ''}</span></li>`;
+                        }
+                    });
+                    html += '</ul>';
+                    
+                    modalBody.innerHTML = html;
+                    detailsModal.show();
+                });
+        }
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html> 
